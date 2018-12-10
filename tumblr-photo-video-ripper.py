@@ -8,6 +8,7 @@ from six.moves import queue as Queue
 from threading import Thread
 import re
 import json
+import string
 
 
 # 设置请求超时时间
@@ -99,7 +100,8 @@ class DownloadWorker(Thread):
                     resp = requests.get(medium_url,
                                         stream=True,
                                         proxies=self.proxies,
-                                        timeout=TIMEOUT)
+                                        timeout=TIMEOUT,
+                                        headers={'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.80 Safari/537.36','accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8','cookie': 'rxx=6jq8jph1sf0.14rs7qml&v=1; _ga=GA1.2.1213624946.1527138471; __utmc=189990958; language=%2Czh_CN; __gads=ID=d09a5ad4651fb554:T=1532618634:S=ALNI_MZSz9kSNWMGuwFsWX1AUqDxVv5BJQ; __utmz=189990958.1538111362.10.4.utmcsr=hatsunenews.wordpress.com|utmccn=(referral)|utmcmd=referral|utmcct=/info/; logged_in=1; tmgioct=5be9485e6259c10571120010; pfg=ae46170faf46ed0e85183e6481ee63ee8cd98f405329ad5aaa1026e7e9ca44a0%23%7B%22gdpr_is_acceptable_age%22%3A1%2C%22exp%22%3A1575817887%2C%22vc%22%3A%22%22%7D%234409293309; _gid=GA1.2.2146102097.1544281890'})
                     with open(file_path, 'wb') as fh:
                         for chunk in resp.iter_content(chunk_size=1024):
                             fh.write(chunk)
@@ -168,7 +170,7 @@ class CrawlerScheduler(object):
             print('apiurl',media_url)
             try:
                 response = requests.get(media_url,proxies=self.proxies,headers={'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.80 Safari/537.36','accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8','cookie': 'rxx=6jq8jph1sf0.14rs7qml&v=1; _ga=GA1.2.1213624946.1527138471; __utmc=189990958; language=%2Czh_CN; __gads=ID=d09a5ad4651fb554:T=1532618634:S=ALNI_MZSz9kSNWMGuwFsWX1AUqDxVv5BJQ; __utmz=189990958.1538111362.10.4.utmcsr=hatsunenews.wordpress.com|utmccn=(referral)|utmcmd=referral|utmcct=/info/; logged_in=1; tmgioct=5be9485e6259c10571120010; pfg=ae46170faf46ed0e85183e6481ee63ee8cd98f405329ad5aaa1026e7e9ca44a0%23%7B%22gdpr_is_acceptable_age%22%3A1%2C%22exp%22%3A1575817887%2C%22vc%22%3A%22%22%7D%234409293309; _gid=GA1.2.2146102097.1544281890'})
-                data = xmltodict.parse(response.content)
+                data = xmltodict.parse(response.text)
           
                 posts = data["tumblr"]["posts"]["post"]
                 for post in posts:
@@ -180,6 +182,8 @@ class CrawlerScheduler(object):
                 break
             except OSError as oe:
                 print("请求接口出错",oe)
+            finally:
+                break
 
 
 def usage():
