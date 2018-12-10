@@ -66,8 +66,8 @@ python tumblr-photo-video-ripper.py site1,site2
 
 ```json
 {
-    "http": "socks5://127.0.0.1:1080",
-    "https": "socks5://127.0.0.1:1080"
+    "http": "socks5h://127.0.0.1:1080",
+    "https": "socks5h://127.0.0.1:1080"
 }
 ```
 
