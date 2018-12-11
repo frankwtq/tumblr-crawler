@@ -183,7 +183,7 @@ class CrawlerScheduler(object):
             except OSError as oe:
                 print("请求接口出错",oe)
             finally:
-                break
+                pass
 
 
 def usage():
