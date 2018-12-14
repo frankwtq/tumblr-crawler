@@ -23,10 +23,10 @@ RETRY = 5
 START = 0
 
 # 每页请求个数
-MEDIA_NUM = 10
+MEDIA_NUM = 50
 
 # 并发线程数
-THREADS = 1
+THREADS = 10
 
 # 是否下载图片
 ISDOWNLOADIMG=True
@@ -252,6 +252,8 @@ class UpdateTag:
             try:
                 with open(self.file_path, 'r') as fh:
                     for tag_data in fh.readlines():
+                        if not tag_data:
+                            continue
                         tag_name = tag_data.split(":")[0]
                         tag_num = tag_data.split(":")[1]
                         self.tags[tag_name] = int(tag_num)
@@ -267,11 +269,11 @@ class UpdateTag:
 
     def write_tags(self):
         try:
-            with open(self.file_path, 'a') as fh:
-                for key, value in self.tags:
-                    fh.write(": ".join([key, value]))
-        except:
-            print "write tags.txt filed"
+            with codecs.open(self.file_path, 'w', 'utf-8') as fh:
+                for key in self.tags:
+                    fh.write(": ".join([key, str(self.tags[key])]) + "\n")
+        except Exception as err:
+            print "write tags.txt filed, %s" % err
             print "tags data is : %s" % self.tags
 
 class KeepUnique:
