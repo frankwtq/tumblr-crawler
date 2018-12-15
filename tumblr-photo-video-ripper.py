@@ -8,7 +8,7 @@ from six.moves import queue as Queue
 from threading import Thread
 import re
 import codecs
-from util import UpdateTag, KeepUnique, to_str, to_unicode
+from util import UpdateTag, KeepUnique, to_str
 import constant as const
 
 
@@ -117,7 +117,8 @@ class DownloadWorker(Thread):
                 medium_name_model = [date, medium_id, description[:200], tag_str, medium_type]
 
         medium_name = "_".join(medium_name_model) + postfix_name
-
+        # 文件名字中不能有'/'，否则就和操作系统的'/'混淆了
+        medium_name = medium_name.replace('/', '\\')
         self._write_medium(medium_name, medium_id, medium_type, medium_url, target_folder)
         self._write_txt(date, description, medium_id, target_folder, tag_str)
 
@@ -136,7 +137,6 @@ class DownloadWorker(Thread):
         if self.unique.is_exist_name(medium_id):
             print "资源[%s]已经存在" % to_str(medium_id)
             raise Exception("资源[%s]已经存在")
-        self.unique.add_new_name(medium_id)
 
         file_path = os.path.join(target_folder, medium_name)
         if not os.path.isfile(file_path):
@@ -152,9 +152,12 @@ class DownloadWorker(Thread):
                     with open(file_path, 'wb') as fh:
                         for chunk in resp.iter_content(chunk_size=1024):
                             fh.write(chunk)
+                    self.unique.add_new_name(medium_id)
                     break
-                except:
+                except Exception as err:
                     # try again
+                    print "Download medium[%s] filed, retry time: %s, " \
+                          "err: %s" % (medium_id, retry_times, err)
                     pass
                 retry_times += 1
             else:

@@ -2,18 +2,18 @@
 
 import re
 
-DEBUG = True
+DEBUG = False
 
 # 每页请求个数
-MEDIA_NUM = 5
+MEDIA_NUM = 50
 
 # 并发线程数
-THREADS = 1
+THREADS = 20
 
 GET_CH_PATTERN = re.compile(u"[\u4e00-\u9fa5]+")
 
 # 设置请求超时时间
-TIMEOUT = 10
+TIMEOUT = 20
 
 # 尝试次数
 RETRY = 5
