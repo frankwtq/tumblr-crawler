@@ -7,32 +7,9 @@ import xmltodict
 from six.moves import queue as Queue
 from threading import Thread
 import re
-import json
 import codecs
-
-GET_CH_PATTERN = re.compile(u"[\u4e00-\u9fa5]+")
-
-
-# 设置请求超时时间
-TIMEOUT = 10
-
-# 尝试次数
-RETRY = 5
-
-# 分页请求的起始点
-START = 0
-
-# 每页请求个数
-MEDIA_NUM = 50
-
-# 并发线程数
-THREADS = 10
-
-# 是否下载图片
-ISDOWNLOADIMG=True
-
-#是否下载视频
-ISDOWNLOADVIDEO=True
+from util import UpdateTag, KeepUnique, to_str, to_unicode
+import constant as const
 
 
 class DownloadWorker(Thread):
@@ -42,27 +19,65 @@ class DownloadWorker(Thread):
         self.proxies = proxies
         self.unique = unique
         self.tags = tags
+        self.curr_index = 0
 
     def run(self):
         while True:
-            medium_type, post, target_folder, index= self.queue.get()
-            self.download(medium_type, post, target_folder, index)
+            medium_type, post, target_folder, self.curr_index = self.queue.get()
+            print "%s:%s: " % (medium_type, self.curr_index)
+            self.download(medium_type, post, target_folder)
             self.queue.task_done()
 
-    def download(self, medium_type, post, target_folder, index):
+    def download(self, medium_type, post, target_folder):
         try:
-            medium_url = self._handle_medium_url(medium_type, post)
+            medium_url = self._get_medium_url(medium_type, post)
             if medium_url is not None:
-                self._download(medium_type, medium_url, target_folder, post, index)
-        except:
-            pass
+                self._download(medium_type, medium_url, target_folder, post)
+            medium_url = self._get_medium_url(medium_type, post, no_photo_url=True)
+            if medium_url is not None:
+                self._download(medium_type, medium_url, target_folder, post)
+        except Exception as err:
+            if "已经存在" not in err.message:
+                print "download failed, err: %s" % err
 
-    def _handle_medium_url(self, medium_type, post):
+    def _get_medium_url(self, medium_type, post, no_photo_url=False):
         try:
+            if no_photo_url and medium_type == "photo":
+                if not post.get("regular-body"):
+                    return None
+                regular_body = post['regular-body']
+                urls = []
+                for url in regular_body.split("img src=\""):
+                    if url.startswith("http"):
+                        urls.append(url.split("\"")[0])
+                if not urls:
+                    return
+                post["photo-url"] = [{"#text": urls[0]}]
+                if len(urls) > 1:
+                    post["photoset"] = {"photo": [{"photo-url": [{"#text": url}]} for url in urls]}
+
+            if no_photo_url and medium_type == "video":
+                if not post.get("regular-body"):
+                    return None
+                regular_body = post['regular-body']
+                urls = []
+                for url in regular_body.split("source src=\""):
+                    if url.startswith("http"):
+                        urls.append(url.split("\"")[0])
+                if not urls:
+                    return
+                if len(urls) > 1:
+                    print post
+                return urls[0]
+
             if medium_type == "photo":
-                return post["photo-url"][0]["#text"]
+                if post.get("photo-url"):
+                    return post["photo-url"][0]["#text"]
+                return None
 
             if medium_type == "video":
+                if not post.get("video-player"):
+                    return None
                 video_player = post["video-player"][1]["#text"]
                 hd_pattern = re.compile(r'.*"hdUrl":("([^\s,]*)"|false),')
                 hd_match = hd_pattern.match(video_player)
@@ -78,24 +93,24 @@ class DownloadWorker(Thread):
                         return match.group(1)
                     except IndexError:
                         return None
-        except:
+        except Exception as err:
+            print "get medium url failed, err: %s" % err
             raise
 
-    def _download(self, medium_type, medium_url, target_folder, post, index):
-        print "%s:%s: " % (medium_type, index)
+    def _download(self, medium_type, medium_url, target_folder, post):
         date = post['@date-gmt'].split(" GMT")[0]
         if medium_type == "photo":
             medium_id = medium_url.split('tumblr_')[1].split('_')[0]
-            description = ",".join(re.findall(GET_CH_PATTERN, post.get('photo-caption', '')))
+            description = ",".join(re.findall(const.GET_CH_PATTERN, post.get('photo-caption', post.get('@slug'))))
             postfix_name = "." + medium_url.split("/")[-1].split("?")[0].split(".")[-1]
         else:
             medium_id = medium_url.split('tumblr_')[1]
-            description = ",".join(re.findall(GET_CH_PATTERN, post.get('video-caption', '')))
+            description = ",".join(re.findall(const.GET_CH_PATTERN, post.get('video-caption', post.get('@slug'))))
             postfix_name = ".mp4"
 
         medium_name_model = [date, medium_id, description[:200], medium_type]
         tagged = post.get('tag')
-        tag_str = ''
+        tag_str = "no_tags"
         if tagged:
             tag_str = ",".join(tagged)
             if len("".join([description[:200] + tag_str])) < 200:
@@ -110,17 +125,17 @@ class DownloadWorker(Thread):
             for pht in post['photoset']['photo'][1:]:
                 pht_url = pht["photo-url"][0]["#text"]
                 pht_id = pht_url.split('tumblr_')[1].split('_')[0]
-                desc = ",".join(re.findall(GET_CH_PATTERN, pht.get('@caption', '')))
+                desc = ",".join(re.findall(const.GET_CH_PATTERN, pht.get('@caption', '')))
                 postfix = "." + pht_url.split("/")[-1].split("?")[0].split(".")[-1]
                 medium = "_".join([date, pht_id, desc[:200], medium_type]) + postfix
                 self._write_medium(medium, pht_id, medium_type, pht_url, target_folder)
-                self._write_txt(date, desc, pht_id, target_folder)
+                self._write_txt(date, desc, pht_id, target_folder, tag_str)
 
     def _write_medium(self, medium_name, medium_id, medium_type, medium_url, target_folder):
         # 判断是否是重复资源
         if self.unique.is_exist_name(medium_id):
-            print "资源[%s]已经存在" % medium_id
-            raise
+            print "资源[%s]已经存在" % to_str(medium_id)
+            raise Exception("资源[%s]已经存在")
         self.unique.add_new_name(medium_id)
 
         file_path = os.path.join(target_folder, medium_name)
@@ -128,12 +143,12 @@ class DownloadWorker(Thread):
             print("Downloading %s from %s.\n" % (medium_name,
                                                  medium_url))
             retry_times = 0
-            while retry_times < RETRY:
+            while retry_times < const.RETRY:
                 try:
                     resp = requests.get(medium_url,
                                         stream=True,
                                         proxies=self.proxies,
-                                        timeout=TIMEOUT)
+                                        timeout=const.TIMEOUT)
                     with open(file_path, 'wb') as fh:
                         for chunk in resp.iter_content(chunk_size=1024):
                             fh.write(chunk)
@@ -166,8 +181,9 @@ class DownloadWorker(Thread):
                     with codecs.open(file_path, 'w', 'utf-8') as fh:
                         fh.write(description)
                         fh.write(tag_str)
-                except:
-                    print "filed to write txt,: %s" % description
+                except Exception as err:
+                    print "filed to write txt, err: %s\n" \
+                          "description: %s" % (err, description)
 
 
 class CrawlerScheduler(object):
@@ -179,38 +195,36 @@ class CrawlerScheduler(object):
         self.unique = KeepUnique()
         self.tags = UpdateTag()
         self.scheduling()
-      
 
     def scheduling(self):
         # 创建工作线程
-        for x in range(THREADS):
+        for x in range(const.THREADS):
             worker = DownloadWorker(self.queue,
                                     unique=self.unique,
                                     tags=self.tags,
                                     proxies=self.proxies)
-            #设置daemon属性，保证主线程在任何情况下可以退出
+            # 设置daemon属性，保证主线程在任何情况下可以退出
             worker.daemon = True
             worker.start()
 
         for site in self.sites:
-            if ISDOWNLOADIMG:
+            if const.ISDOWNLOADIMG:
                 self.download_photos(site)
-            if ISDOWNLOADVIDEO:
+            if const.ISDOWNLOADVIDEO:
                 self.download_videos(site)
 
         self.unique.write_medium_names()
         self.tags.write_tags()
-        
 
     def download_videos(self, site):
-        self._download_media(site, "video", START)
+        self._download_media(site, "video", const.START)
         # 等待queue处理完一个用户的所有请求任务项
         self.queue.join()
         print("视频下载完成 %s" % site)
 
     def download_photos(self, site):
-        self._download_media(site, "photo", START)
-         # 等待queue处理完一个用户的所有请求任务项
+        self._download_media(site, "photo", const.START)
+        # 等待queue处理完一个用户的所有请求任务项
         self.queue.join()
         print("图片下载完成 %s" % site)
 
@@ -221,97 +235,28 @@ class CrawlerScheduler(object):
             os.mkdir(target_folder)
 
         base_url = "https://{0}.tumblr.com/api/read?type={1}&num={2}&start={3}"
-        start = START
+        start = const.START
         while True:
-            media_url = base_url.format(site, medium_type, MEDIA_NUM, start)
+            media_url = base_url.format(site, medium_type, const.MEDIA_NUM, start)
             response = requests.get(media_url,
                                     proxies=self.proxies)
             data = xmltodict.parse(response.content)
             try:
                 index = start
-                posts = data["tumblr"]["posts"]["post"]
+                posts = data["tumblr"]["posts"].get("post")
+                if not posts:
+                    break
                 for post in posts:
                     # select the largest resolution
                     # usually in the first element
                     self.queue.put((medium_type, post, target_folder, index))
                     index += 1
-                start += MEDIA_NUM
-                break
-            except KeyError:
-                break
-
-class UpdateTag:
-    def __init__(self):
-        self.tags = {}
-        self.file_name = "tags.txt"
-        self.file_path = os.path.join(os.getcwd(), self.file_name)
-        self.read_tags()
-
-    def read_tags(self):
-        if os.path.isfile(self.file_path):
-            try:
-                with open(self.file_path, 'r') as fh:
-                    for tag_data in fh.readlines():
-                        if not tag_data:
-                            continue
-                        tag_name = tag_data.split(":")[0]
-                        tag_num = tag_data.split(":")[1]
-                        self.tags[tag_name] = int(tag_num)
-            except:
-                print "read tags.txt filed"
-                raise
-    def update_tags(self, tags):
-        for tag in tags:
-            if self.tags.get(tag):
-                self.tags[tag] += 1
-            else:
-                self.tags[tag] = 0
-
-    def write_tags(self):
-        try:
-            with codecs.open(self.file_path, 'w', 'utf-8') as fh:
-                for key in self.tags:
-                    fh.write(": ".join([key, str(self.tags[key])]) + "\n")
-        except Exception as err:
-            print "write tags.txt filed, %s" % err
-            print "tags data is : %s" % self.tags
-
-class KeepUnique:
-    def __init__(self):
-        self.medium_ids = {}
-        self.new_ids = {}
-        self.file_name = "medium_ids.txt"
-        self.file_path = os.path.join(os.getcwd(), self.file_name)
-        self.read_medium_ids()
-
-    def read_medium_ids(self):
-        if os.path.isfile(self.file_path):
-            try:
-                with open(self.file_path, 'r') as fh:
-                    datas = fh.read().rstrip().lstrip().split(",")
-                    for date in datas:
-                        self.medium_ids[date] = ""
-            except:
-                print "read medium ids txt filed"
-                raise
-
-    def is_exist_name(self, name):
-        return self.medium_ids.get(name) is not None or \
-               self.new_ids.get(name) is not None
-
-    def add_new_name(self, name):
-        self.new_ids[name] = ''
-
-    def write_medium_names(self):
-        date = ''
-        try:
-            with open(self.file_path, 'a') as fh:
-                date = ','.join(self.new_ids) + ','
-                fh.write(date)
-        except:
-            print "write medium names file filed."
-            print "medium_names is :%s" % date
-
+                start += const.MEDIA_NUM
+                print "%s 个post 已经被加入到队列中" % start
+                if const.DEBUG:
+                    break
+            except KeyError as err:
+                print "update posts to queue filed, err: %s" % err
 
 def usage():
     print(u"未找到sites.txt文件，请创建.\n"
